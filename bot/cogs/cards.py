@@ -1,9 +1,11 @@
-"""Dropping cards for members to claim, viewing collections, and framing them."""
+"""Dropping cards to claim, browsing collections, and framing them."""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+import random
+from io import BytesIO
+from typing import Callable, Optional
 
 import aiohttp
 import discord
@@ -13,9 +15,31 @@ from discord.ext import commands
 from bot import config, database, frames
 from bot.database import Card, OwnedCard
 
-# Discord allows at most 10 attachments/embeds per message.
-MAX_SHOWCASE = 10
+MAX_SHOWCASE = 10        # Discord's per-message attachment / embed limit
+INVENTORY_PAGE = 5       # cards shown per /inventory page
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=15)
+
+# Drop celebration flavor — one of each is picked per drop.
+_DROP_HEADERS = (
+    "# 🎉 A WILD DROP APPEARED! 🎉",
+    "# ✨ DROP INCOMING ✨",
+    "# 🎊 FRESH CARDS JUST DROPPED 🎊",
+    "# 💥 DROP! DROP! DROP! 💥",
+    "# 🪄 THE POOL STIRS… 🪄",
+    "# 🌟 LOOK WHAT FELL OUT OF THE PACK 🌟",
+)
+_DROP_FLAVOR = (
+    "The cards shimmer into view…",
+    "Fortune favors the fast. 🍀",
+    "Snooze and you lose. 👀",
+    "May the quickest click win. 🖱️",
+    "Someone's collection is about to level up. 📈",
+    "Gloves off. 🥊",
+)
+_DROP_ACCENTS = (
+    0xF1C40F, 0xE91E63, 0x9B59B6, 0x2ECC71, 0x3498DB, 0xE67E22, 0x1ABC9C, 0xFF5E5B,
+)
+_CLAIM_CHEERS = ("🎊", "🎉", "✨", "💥", "🙌", "🔥")
 
 
 async def render_framed_file(image_url: str, frame_key: str, filename: str) -> discord.File:
@@ -47,62 +71,6 @@ async def _fetch_art(urls: list[str]) -> dict[str, bytes]:
     return fetched
 
 
-async def _collection_sheet(cards: list[OwnedCard]) -> Optional[discord.File]:
-    """A single grid image of the collection, framed, or None if nothing rendered."""
-    art = await _fetch_art([c.image_url for c in cards])
-    tiles = [
-        (art[c.image_url], c.frame, f"#{c.card_id} {c.card_name}")
-        for c in cards
-        if c.image_url in art
-    ]
-    if not tiles:
-        return None
-    buf = await asyncio.to_thread(frames.contact_sheet, tiles)
-    return discord.File(buf, filename="inventory.png")
-
-
-def _inventory_line(card: OwnedCard) -> str:
-    line = f"#{card.card_id} {card.card_name} (print #{card.print_number})"
-    if card.frame != frames.DEFAULT:
-        line += f" · {frames.label_for(card.frame)} frame"
-    return line
-
-
-class DropView(discord.ui.View):
-    """One button per dropped card. First click claims it, then that button locks."""
-
-    def __init__(self, cards: list[Card]) -> None:
-        super().__init__(timeout=300)
-        self.claimed_by: dict[int, int] = {}  # card_id -> user_id
-        for card in cards:
-            self.add_item(self._make_button(card))
-
-    def _make_button(self, card: Card) -> discord.ui.Button:
-        button = discord.ui.Button(label=f"Claim {card.name}", style=discord.ButtonStyle.primary)
-
-        async def callback(interaction: discord.Interaction) -> None:
-            if card.id in self.claimed_by:
-                await interaction.response.send_message("Someone already claimed that one.", ephemeral=True)
-                return
-
-            self.claimed_by[card.id] = interaction.user.id
-            print_number = await database.claim_card(card.id, interaction.user.id)
-            button.disabled = True
-            button.label = f"{card.name} — claimed by {interaction.user.display_name}"
-            await interaction.response.edit_message(view=self)
-            await interaction.followup.send(
-                f"{interaction.user.mention} claimed **{card.name}** (print #{print_number}) "
-                f"— art by <@{card.submitted_by}>!"
-            )
-
-        button.callback = callback
-        return button
-
-    async def on_timeout(self) -> None:
-        for item in self.children:
-            item.disabled = True
-
-
 async def _render_cards(
     cards: list[OwnedCard], *, footer: Optional[str]
 ) -> tuple[list[discord.Embed], list[discord.File]]:
@@ -128,37 +96,8 @@ async def _render_cards(
     return embeds, files
 
 
-class InventorySelect(discord.ui.Select):
-    """Multi-select of the owner's copies. The parent view reads ``picked()``."""
-
-    def __init__(self, owned: list[OwnedCard]) -> None:
-        self._by_id = {str(c.id): c for c in owned}
-        options = [
-            discord.SelectOption(
-                label=f"#{c.card_id} {c.card_name}"[:100],
-                value=str(c.id),
-                description=(
-                    None if c.frame == frames.DEFAULT else f"{frames.label_for(c.frame)} frame"
-                ),
-            )
-            for c in owned[:25]
-        ]
-        super().__init__(
-            placeholder="Pick card(s)…",
-            min_values=1,
-            max_values=min(len(options), MAX_SHOWCASE),
-            options=options,
-        )
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()  # selection is read when a button is pressed
-
-    def picked(self) -> list[OwnedCard]:
-        return [self._by_id[value] for value in self.values]
-
-
 class FrameSelect(discord.ui.Select):
-    """Second step of "Apply a frame": choose one frame for the cards picked so far."""
+    """"Apply a frame" step two: choose one frame for the cards selected so far."""
 
     def __init__(self, cards: list[OwnedCard], owner_id: int) -> None:
         self._cards = cards
@@ -187,7 +126,7 @@ class FrameSelect(discord.ui.Select):
 
         label = frames.label_for(frame_key)
         plural = "s" if len(updated) != 1 else ""
-        note = f"Applied the **{label}** frame to {len(updated)} card{plural}."
+        note = f"Applied the **{label}** frame to {len(updated)} card{plural}. Re-run /inventory to refresh it."
         embeds, files = await _render_cards(updated, footer=None)
         if files:
             await interaction.edit_original_response(content=note, embeds=embeds, attachments=files, view=None)
@@ -195,47 +134,217 @@ class FrameSelect(discord.ui.Select):
             await interaction.edit_original_response(content=f"{note} (preview unavailable)", embeds=[], view=None)
 
 
-class InventoryView(discord.ui.View):
-    """Ephemeral, owner-only: pick copies, then show them in-channel or reframe them."""
+class DropBoard(discord.ui.LayoutView):
+    """A splashy panel with one art tile + Claim button per dropped card."""
 
-    def __init__(self, owned: list[OwnedCard], owner_id: int) -> None:
-        super().__init__(timeout=180)
-        self.owner_id = owner_id
-        self.select = InventorySelect(owned)
-        self.add_item(self.select)
+    def __init__(self, cards: list[Card], have_art: set[int]) -> None:
+        super().__init__(timeout=900)
+        self.claimed_by: dict[int, int] = {}  # card_id -> user_id
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("This isn't your inventory.", ephemeral=True)
-            return False
-        return True
+        container = discord.ui.Container(accent_colour=random.choice(_DROP_ACCENTS))
+        container.add_item(
+            discord.ui.TextDisplay(
+                f"{random.choice(_DROP_HEADERS)}\n"
+                f"{random.choice(_DROP_FLAVOR)}\n"
+                f"**{len(cards)} up for grabs** · first click wins each 🏁"
+            )
+        )
+        for index, card in enumerate(cards):
+            container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.large))
+            if card.id in have_art:
+                container.add_item(
+                    discord.ui.MediaGallery(
+                        discord.MediaGalleryItem(media=f"attachment://drop_{index}.png")
+                    )
+                )
+            container.add_item(
+                discord.ui.TextDisplay(f"### 🃏 {card.name}\n#{card.id} · art by <@{card.submitted_by}>")
+            )
+            row = discord.ui.ActionRow()
+            row.add_item(self._claim_button(card))
+            container.add_item(row)
+        self.add_item(container)
 
-    @discord.ui.button(label="Show in channel", style=discord.ButtonStyle.primary, row=1)
-    async def show(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        picks = self.select.picked()
+    def _claim_button(self, card: Card) -> discord.ui.Button:
+        button = discord.ui.Button(
+            label=f"Claim {card.name}"[:80], emoji="✋", style=discord.ButtonStyle.success
+        )
+
+        async def callback(interaction: discord.Interaction) -> None:
+            if card.id in self.claimed_by:
+                await interaction.response.send_message(
+                    "Too slow — someone already grabbed that one! 😤", ephemeral=True
+                )
+                return
+            self.claimed_by[card.id] = interaction.user.id
+            print_number = await database.claim_card(card.id, interaction.user.id)
+            button.disabled = True
+            button.emoji = None
+            button.label = f"Claimed by {interaction.user.display_name}"[:80]
+            await interaction.response.edit_message(view=self)
+
+            if print_number == 1:
+                announcement = (
+                    f"🥇 **FIRST PRINT!** {interaction.user.mention} nabbed **{card.name}** #1 "
+                    f"— art by <@{card.submitted_by}>! 🎉"
+                )
+            else:
+                announcement = (
+                    f"{random.choice(_CLAIM_CHEERS)} {interaction.user.mention} claimed "
+                    f"**{card.name}** (print #{print_number}) — art by <@{card.submitted_by}>!"
+                )
+            await interaction.followup.send(announcement)
+
+        button.callback = callback
+        return button
+
+
+class InventoryBoard(discord.ui.LayoutView):
+    """Paged: one art panel + Select toggle per card. The owner also gets Show / Frame."""
+
+    def __init__(self, owned: list[OwnedCard], owner_id: Optional[int], *, title: str) -> None:
+        super().__init__(timeout=300)
+        self.owned = owned
+        self.owner_id = owner_id  # None => read-only view of someone else's collection
+        self.title = title
+        self.page = 0
+        self.selected: set[int] = set()
+        self._cache: dict[tuple[str, str], bytes] = {}  # (url, frame) -> composited PNG
+
+    @property
+    def _pages(self) -> int:
+        return max(1, -(-len(self.owned) // INVENTORY_PAGE))
+
+    def _page_cards(self) -> list[OwnedCard]:
+        start = self.page * INVENTORY_PAGE
+        return self.owned[start : start + INVENTORY_PAGE]
+
+    def _picked(self) -> list[OwnedCard]:
+        return [c for c in self.owned if c.id in self.selected]
+
+    async def build(self) -> list[discord.File]:
+        """Rebuild the components for the current page; returns that page's attachments."""
+        self.clear_items()
+        cards = self._page_cards()
+
+        missing = [c.image_url for c in cards if (c.image_url, c.frame) not in self._cache]
+        fetched = await _fetch_art(missing) if missing else {}
+        for card in cards:
+            key = (card.image_url, card.frame)
+            if key not in self._cache and card.image_url in fetched:
+                try:
+                    buf = await asyncio.to_thread(frames.compose, fetched[card.image_url], card.frame)
+                    self._cache[key] = buf.getvalue()
+                except Exception:
+                    pass
+
+        files: list[discord.File] = []
+        status = f"## {self.title}\n{len(self.owned)} cards · page {self.page + 1}/{self._pages}"
+        if self.owner_id is not None:
+            status += f" · {len(self.selected)} selected"
+        self.add_item(discord.ui.TextDisplay(status))
+
+        for index, card in enumerate(cards):
+            data = self._cache.get((card.image_url, card.frame))
+            if data is not None:
+                filename = f"inv_{self.page}_{index}.png"
+                files.append(discord.File(BytesIO(data), filename=filename))
+                self.add_item(
+                    discord.ui.MediaGallery(discord.MediaGalleryItem(media=f"attachment://{filename}"))
+                )
+            tag = "" if card.frame == frames.DEFAULT else f" · {frames.label_for(card.frame)} frame"
+            self.add_item(
+                discord.ui.TextDisplay(
+                    f"**{card.card_name}** · #{card.card_id} · print #{card.print_number}{tag} "
+                    f"· art by <@{card.submitted_by}>"
+                )
+            )
+            if self.owner_id is not None:
+                row = discord.ui.ActionRow()
+                row.add_item(self._toggle_button(card))
+                self.add_item(row)
+            self.add_item(discord.ui.Separator())
+
+        nav = discord.ui.ActionRow()
+        nav.add_item(self._nav_button("◀ Prev", -1))
+        nav.add_item(self._nav_button("Next ▶", +1))
+        if self.owner_id is not None:
+            nav.add_item(self._plain_button("Show in channel", self._show, discord.ButtonStyle.primary))
+            nav.add_item(self._plain_button("Apply a frame", self._frame, discord.ButtonStyle.secondary))
+        self.add_item(nav)
+        return files
+
+    def _toggle_button(self, card: OwnedCard) -> discord.ui.Button:
+        on = card.id in self.selected
+        button = discord.ui.Button(
+            label="Selected ✓" if on else "Select",
+            style=discord.ButtonStyle.success if on else discord.ButtonStyle.secondary,
+        )
+
+        async def callback(interaction: discord.Interaction) -> None:
+            self.selected.discard(card.id) if card.id in self.selected else self.selected.add(card.id)
+            await self.build()  # cache is warm, so this just restyles the buttons
+            await interaction.response.edit_message(view=self)
+
+        button.callback = callback
+        return button
+
+    def _nav_button(self, label: str, delta: int) -> discord.ui.Button:
+        target = self.page + delta
+        button = discord.ui.Button(
+            label=label,
+            style=discord.ButtonStyle.secondary,
+            disabled=not 0 <= target < self._pages,
+        )
+
+        async def callback(interaction: discord.Interaction) -> None:
+            self.page = max(0, min(self._pages - 1, self.page + delta))
+            files = await self.build()
+            await interaction.response.edit_message(view=self, attachments=files)
+
+        button.callback = callback
+        return button
+
+    def _plain_button(
+        self,
+        label: str,
+        handler: Callable[[discord.Interaction], object],
+        style: discord.ButtonStyle,
+    ) -> discord.ui.Button:
+        button = discord.ui.Button(label=label, style=style)
+        button.callback = handler
+        return button
+
+    async def _show(self, interaction: discord.Interaction) -> None:
+        picks = self._picked()
         if not picks:
-            await interaction.response.send_message("Pick at least one card first.", ephemeral=True)
+            await interaction.response.send_message("Select some cards first.", ephemeral=True)
             return
         await interaction.response.defer()
-        embeds, files = await _render_cards(picks, footer=f"shown by {interaction.user.display_name}")
+        embeds, files = await _render_cards(
+            picks[:MAX_SHOWCASE], footer=f"shown by {interaction.user.display_name}"
+        )
         if not files:
             await interaction.followup.send("Couldn't render those right now — try again in a moment.", ephemeral=True)
             return
-        for child in self.children:
-            child.disabled = True
-        await interaction.edit_original_response(view=self)
         await interaction.followup.send(embeds=embeds, files=files)
 
-    @discord.ui.button(label="Apply a frame", style=discord.ButtonStyle.secondary, row=1)
-    async def apply_frame(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        picks = self.select.picked()
+    async def _frame(self, interaction: discord.Interaction) -> None:
+        picks = self._picked()
         if not picks:
-            await interaction.response.send_message("Pick the card(s) to frame first.", ephemeral=True)
+            await interaction.response.send_message("Select the cards to frame first.", ephemeral=True)
             return
         picker = discord.ui.View(timeout=120)
         picker.add_item(FrameSelect(picks, self.owner_id))
-        names = ", ".join(c.card_name for c in picks)
-        await interaction.response.edit_message(content=f"Choose a frame for **{names}**:", embed=None, view=picker)
+        await interaction.response.send_message(
+            f"Choose a frame for {len(picks)} card(s):", view=picker, ephemeral=True
+        )
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.owner_id is not None and interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This isn't your inventory.", ephemeral=True)
+            return False
+        return True
 
 
 class Cards(commands.Cog):
@@ -253,38 +362,21 @@ class Cards(commands.Cog):
             return
 
         await interaction.response.defer()
+        art = await _fetch_art([c.image_url for c in cards])
+        files: list[discord.File] = []
+        have_art: set[int] = set()
+        for index, card in enumerate(cards):
+            raw = art.get(card.image_url)
+            if raw is None:
+                continue
+            try:
+                buf = await asyncio.to_thread(frames.compose, raw, frames.DEFAULT)
+            except Exception:
+                continue
+            files.append(discord.File(buf, filename=f"drop_{index}.png"))
+            have_art.add(card.id)
 
-        embed = discord.Embed(title="A drop appeared!", description="Click a button below to claim a card.")
-        for card in cards:
-            embed.add_field(
-                name=card.name,
-                value=f"Card #{card.id} · art by <@{card.submitted_by}>",
-                inline=True,
-            )
-
-        drop_file: Optional[discord.File] = None
-        try:
-            art = await _fetch_art([c.image_url for c in cards])
-            tiles = [
-                (art[c.image_url], frames.DEFAULT, f"#{c.id} {c.name}")
-                for c in cards
-                if c.image_url in art
-            ]
-            if tiles:
-                buf = await asyncio.to_thread(
-                    frames.contact_sheet, tiles, columns=min(len(tiles), 4)
-                )
-                drop_file = discord.File(buf, filename="drop.png")
-                embed.set_image(url="attachment://drop.png")
-        except Exception:
-            drop_file = None
-        if drop_file is None:
-            embed.set_thumbnail(url=cards[0].image_url)
-
-        kwargs: dict = {"embed": embed, "view": DropView(cards)}
-        if drop_file is not None:
-            kwargs["file"] = drop_file
-        await interaction.followup.send(**kwargs)
+        await interaction.followup.send(view=DropBoard(cards, have_art), files=files)
 
     @drop.error
     async def drop_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
@@ -297,7 +389,7 @@ class Cards(commands.Cog):
 
     @app_commands.command(
         name="inventory",
-        description="View a collection — for your own, pick cards to show in-channel or reframe",
+        description="Browse a collection card by card — for your own, select cards to show or reframe",
     )
     @app_commands.describe(member="Whose collection to view (defaults to you)")
     async def inventory(self, interaction: discord.Interaction, member: Optional[discord.Member] = None) -> None:
@@ -309,28 +401,13 @@ class Cards(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=is_self)
-        shown = owned[:25]
-
-        embed = discord.Embed(title=f"{target.display_name}'s collection ({len(owned)} cards)")
-        embed.description = "\n".join(_inventory_line(c) for c in shown)
-        footer = []
-        if len(owned) > 25:
-            footer.append("showing the 25 most recent")
-        if is_self:
-            footer.append("pick cards below to show in channel or reframe")
-        if footer:
-            embed.set_footer(text=" · ".join(footer))
-
-        sheet = await _collection_sheet(shown)
-        if sheet is not None:
-            embed.set_image(url="attachment://inventory.png")
-
-        kwargs: dict = {"embed": embed, "ephemeral": is_self}
-        if sheet is not None:
-            kwargs["file"] = sheet
-        if is_self:
-            kwargs["view"] = InventoryView(owned, interaction.user.id)
-        await interaction.followup.send(**kwargs)
+        board = InventoryBoard(
+            owned,
+            interaction.user.id if is_self else None,
+            title=f"{target.display_name}'s collection",
+        )
+        files = await board.build()
+        await interaction.followup.send(view=board, files=files, ephemeral=is_self)
 
     @app_commands.command(name="frames", description="Preview the frame styles you can put on your cards")
     async def frames_list(self, interaction: discord.Interaction) -> None:

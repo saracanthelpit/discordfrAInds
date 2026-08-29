@@ -8,17 +8,18 @@ cards: submit art and it goes straight into the drop pool, then anyone can
 
 1. `/submit name:<str> image:<attachment>` — post your art. It's
    announced with an embed and immediately joins the drop pool.
-2. `/drop` — posts a set of cards (size set by `DROP_SIZE`) with a claim
-   button on each. First click wins that copy; claims are numbered in the
-   order they're claimed (print #1, #2, ...).
-3. `/inventory [member]` — see a collection rendered as a framed grid of
-   every card. Viewing your own also gives you a picker: select one or
-   more copies, then **Show in channel** to post them or **Apply a
-   frame** to restyle them — no card IDs to copy around. `/frames`
-   previews the styles (bronze, silver, gold, emerald, obsidian, rose).
-   Frames are per-copy: two owners of the same card can frame it
-   differently. `/card <id>` — see one card's art and how many copies
-   exist.
+2. `/drop` — posts a celebratory panel (random accent colour, hype
+   copy) with `DROP_SIZE` cards, each shown with its art and its own
+   Claim button. First click wins that copy; claims are numbered in the
+   order they're claimed (print #1 gets a shout-out).
+3. `/inventory [member]` — browse a collection card by card, paginated,
+   each card shown with its art. On your own you get a **Select** button
+   per card; selected cards (across pages) can be posted with **Show in
+   channel** or restyled with **Apply a frame** — no card IDs to copy
+   around. `/frames` previews the styles (bronze, silver, gold, emerald,
+   obsidian, rose). Frames are per-copy: two owners of the same card can
+   frame it differently. `/card <id>` — see one card's art and how many
+   copies exist.
 4. `/gift <member>` — pick one or more of your cards from a menu and hand
    them to someone else.
 5. `/trade <member>` — build a two-way offer: pick cards from each side,
@@ -63,10 +64,10 @@ bot/
   config.py         reads .env
   database.py       aiosqlite access layer (schema in SCHEMA, later
                     columns in MIGRATIONS, applied on startup)
-  frames.py         procedurally-drawn cosmetic frames + inventory grid (Pillow)
+  frames.py         procedurally-drawn cosmetic frames (Pillow)
   cogs/
     submissions.py  /submit
-    cards.py        /drop, /inventory (pick → show / frame), /card, /frames
+    cards.py        /drop, /inventory (paged, per-card select), /card, /frames
     trading.py      /gift (one-way), /trade (two-way offer + accept/decline)
     help.py         /help
 data/
@@ -90,9 +91,9 @@ make it yours:
 - **Fancier frames** — `bot/frames.py` draws each frame from a `Frame`
   spec; add gradient fills, ornate corners, or drop in real PNG overlays
   without touching the rest of the pipeline.
-- **Persistent trade/drop views** — `DropView` and the trade views go
-  inert after a restart. Give them `custom_id`s and register with
-  `bot.add_view` to survive restarts.
+- **Persistent views** — `DropBoard`, `InventoryBoard`, and the trade
+  views go inert after a restart (and on timeout). Give their controls
+  `custom_id`s and register with `bot.add_view` to survive restarts.
 - **Series/packs** — group submissions into themed sets (e.g. one per art
   challenge or month) and let `/drop` pull from a specific series.
 - **Leaderboard** — `/leaderboard` for most cards owned, rarest card held,

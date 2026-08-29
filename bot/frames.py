@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 RGBA = tuple[int, int, int, int]
 
@@ -139,50 +139,3 @@ def compose(art_bytes: bytes, frame_key: str) -> BytesIO:
     canvas.convert("RGB").save(buf, format="PNG")
     buf.seek(0)
     return buf
-
-
-def contact_sheet(
-    tiles: list[tuple[bytes, str, str]],
-    *,
-    columns: int = 4,
-    thumb: int = 240,
-    bg: tuple[int, int, int] = (24, 24, 28),
-    fg: tuple[int, int, int] = (219, 219, 224),
-) -> BytesIO:
-    """Grid of framed thumbnails with a caption under each.
-
-    ``tiles`` is ``(art_bytes, frame_key, caption)``. Returns a PNG buffer.
-    """
-    font = ImageFont.load_default()
-    caption_h = 18
-
-    cells: list[tuple[Image.Image, str]] = []
-    for art_bytes, frame_key, caption in tiles:
-        thumbnail = Image.open(compose(art_bytes, frame_key)).convert("RGB")
-        thumbnail.thumbnail((thumb, thumb))
-        cells.append((thumbnail, caption))
-
-    cols = max(1, min(columns, len(cells)))
-    rows = -(-len(cells) // cols)
-    cell_w = max(img.width for img, _ in cells)
-    cell_h = max(img.height for img, _ in cells)
-    pad = 12
-
-    sheet = Image.new(
-        "RGB",
-        (cols * (cell_w + pad) + pad, rows * (cell_h + caption_h + pad) + pad),
-        bg,
-    )
-    draw = ImageDraw.Draw(sheet)
-    for index, (img, caption) in enumerate(cells):
-        row, col = divmod(index, cols)
-        origin_x = pad + col * (cell_w + pad)
-        origin_y = pad + row * (cell_h + caption_h + pad)
-        sheet.paste(img, (origin_x + (cell_w - img.width) // 2, origin_y + (cell_h - img.height) // 2))
-        text = caption if len(caption) <= 30 else caption[:29] + "…"
-        draw.text((origin_x + 2, origin_y + cell_h + 3), text, fill=fg, font=font)
-
-    out = BytesIO()
-    sheet.save(out, format="PNG")
-    out.seek(0)
-    return out

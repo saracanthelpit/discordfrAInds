@@ -18,11 +18,11 @@ SECTIONS: list[tuple[str, str]] = [
     ),
     (
         "Your collection & frames",
-        "**/inventory** `[member]` — view a collection as a framed grid of "
-        "every card. Your own also gets a picker: select copies, then "
-        "**Show in channel** to post them or **Apply a frame** to restyle "
-        "them. Frames are per copy, so your version can look different from "
-        "everyone else's.\n"
+        "**/inventory** `[member]` — browse a collection card by card, "
+        "paged, each with its own art. On your own, tap **Select** on any "
+        "cards then **Show in channel** to post them or **Apply a frame** "
+        "to restyle them. Frames are per copy, so your version can look "
+        "different from everyone else's.\n"
         "**/frames** — preview the styles.\n"
         "**/card** `id` — one card's art and how many copies exist.",
     ),
