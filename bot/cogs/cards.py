@@ -28,6 +28,39 @@ async def render_framed_file(image_url: str, frame_key: str, filename: str) -> d
     return discord.File(buf, filename=filename)
 
 
+async def _fetch_art(urls: list[str]) -> dict[str, bytes]:
+    """Download every distinct URL, a few at a time. Missing ones are just omitted."""
+    fetched: dict[str, bytes] = {}
+    semaphore = asyncio.Semaphore(6)
+
+    async def one(session: aiohttp.ClientSession, url: str) -> None:
+        async with semaphore:
+            try:
+                async with session.get(url) as resp:
+                    resp.raise_for_status()
+                    fetched[url] = await resp.read()
+            except Exception:
+                pass
+
+    async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+        await asyncio.gather(*(one(session, url) for url in set(urls)))
+    return fetched
+
+
+async def _collection_sheet(cards: list[OwnedCard]) -> Optional[discord.File]:
+    """A single grid image of the collection, framed, or None if nothing rendered."""
+    art = await _fetch_art([c.image_url for c in cards])
+    tiles = [
+        (art[c.image_url], c.frame, f"#{c.card_id} {c.card_name}")
+        for c in cards
+        if c.image_url in art
+    ]
+    if not tiles:
+        return None
+    buf = await asyncio.to_thread(frames.contact_sheet, tiles)
+    return discord.File(buf, filename="inventory.png")
+
+
 def _inventory_line(card: OwnedCard) -> str:
     line = f"#{card.card_id} {card.card_name} (print #{card.print_number})"
     if card.frame != frames.DEFAULT:
@@ -247,23 +280,35 @@ class Cards(commands.Cog):
     @app_commands.describe(member="Whose collection to view (defaults to you)")
     async def inventory(self, interaction: discord.Interaction, member: Optional[discord.Member] = None) -> None:
         target = member or interaction.user
+        is_self = target.id == interaction.user.id
         owned = await database.get_user_cards(target.id)
         if not owned:
             await interaction.response.send_message(f"{target.display_name} has no cards yet.", ephemeral=True)
             return
 
-        embed = discord.Embed(title=f"{target.display_name}'s collection ({len(owned)} cards)")
-        embed.description = "\n".join(_inventory_line(c) for c in owned[:25])
-        if len(owned) > 25:
-            embed.set_footer(text="Showing the 25 most recent.")
+        await interaction.response.defer(ephemeral=is_self)
+        shown = owned[:25]
 
-        if target.id == interaction.user.id:
-            embed.set_footer(text="Pick cards below, then Show in channel or Apply a frame.")
-            await interaction.response.send_message(
-                embed=embed, view=InventoryView(owned, interaction.user.id), ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(embed=embed)
+        embed = discord.Embed(title=f"{target.display_name}'s collection ({len(owned)} cards)")
+        embed.description = "\n".join(_inventory_line(c) for c in shown)
+        footer = []
+        if len(owned) > 25:
+            footer.append("showing the 25 most recent")
+        if is_self:
+            footer.append("pick cards below to show in channel or reframe")
+        if footer:
+            embed.set_footer(text=" · ".join(footer))
+
+        sheet = await _collection_sheet(shown)
+        if sheet is not None:
+            embed.set_image(url="attachment://inventory.png")
+
+        kwargs: dict = {"embed": embed, "ephemeral": is_self}
+        if sheet is not None:
+            kwargs["file"] = sheet
+        if is_self:
+            kwargs["view"] = InventoryView(owned, interaction.user.id)
+        await interaction.followup.send(**kwargs)
 
     @app_commands.command(name="frames", description="Preview the frame styles you can put on your cards")
     async def frames_list(self, interaction: discord.Interaction) -> None:

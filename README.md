@@ -11,13 +11,14 @@ cards: submit art and it goes straight into the drop pool, then anyone can
 2. `/drop` — posts a set of cards (size set by `DROP_SIZE`) with a claim
    button on each. First click wins that copy; claims are numbered in the
    order they're claimed (print #1, #2, ...).
-3. `/inventory [member]` — see a collection. Viewing your own gives you a
-   picker: select one or more copies, then **Show in channel** to post
-   them (framed) or **Apply a frame** to restyle them — no card IDs to
-   copy around. `/frames` previews the styles (bronze, silver, gold,
-   emerald, obsidian, rose). Frames are per-copy: two owners of the same
-   card can frame it differently. `/card <id>` — see one card's art and
-   how many copies exist.
+3. `/inventory [member]` — see a collection rendered as a framed grid of
+   every card. Viewing your own also gives you a picker: select one or
+   more copies, then **Show in channel** to post them or **Apply a
+   frame** to restyle them — no card IDs to copy around. `/frames`
+   previews the styles (bronze, silver, gold, emerald, obsidian, rose).
+   Frames are per-copy: two owners of the same card can frame it
+   differently. `/card <id>` — see one card's art and how many copies
+   exist.
 4. `/gift <member>` — pick one or more of your cards from a menu and hand
    them to someone else.
 5. `/trade <member>` — build a two-way offer: pick cards from each side,
@@ -62,7 +63,7 @@ bot/
   config.py         reads .env
   database.py       aiosqlite access layer (schema in SCHEMA, later
                     columns in MIGRATIONS, applied on startup)
-  frames.py         procedurally-drawn cosmetic frames (Pillow)
+  frames.py         procedurally-drawn cosmetic frames + inventory grid (Pillow)
   cogs/
     submissions.py  /submit
     cards.py        /drop, /inventory (pick → show / frame), /card, /frames
