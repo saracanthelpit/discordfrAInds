@@ -177,23 +177,83 @@ class OfferResponse(discord.ui.View):
         self._lock()
 
 
+class GiftView(discord.ui.View):
+    """Ephemeral, giver-only: pick card(s) and hand them straight over."""
+
+    def __init__(
+        self,
+        giver: discord.abc.User,
+        recipient: discord.Member,
+        cards: list[OwnedCard],
+    ) -> None:
+        super().__init__(timeout=180)
+        self.giver = giver
+        self.recipient = recipient
+        self._by_id = {str(c.id): c for c in cards}
+        self.select = _CardSelect(cards, f"Cards to give {recipient.display_name}…", required=True)
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.giver.id:
+            await interaction.response.send_message("This isn't your gift.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Give", style=discord.ButtonStyle.success, row=4)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        picked_ids = list(self.select.values)
+        if not picked_ids:
+            await interaction.response.send_message("Pick at least one card first.", ephemeral=True)
+            return
+
+        given: list[OwnedCard] = []
+        for card_id in picked_ids:
+            if await database.transfer_card(int(card_id), self.giver.id, self.recipient.id):
+                given.append(self._by_id[card_id])
+
+        for item in self.children:
+            item.disabled = True
+        if not given:
+            await interaction.response.edit_message(
+                content="Those aren't yours to give anymore.", view=self
+            )
+            return
+
+        plural = "s" if len(given) != 1 else ""
+        await interaction.response.edit_message(
+            content=f"Gifted {len(given)} card{plural} to {self.recipient.display_name}. ✅", view=self
+        )
+        lines = "\n".join(_attribution_line(c) for c in given)
+        await interaction.followup.send(
+            content=f"{self.giver.mention} gifted {self.recipient.mention} {len(given)} card{plural}:\n{lines}",
+            allowed_mentions=discord.AllowedMentions(users=[self.recipient]),
+        )
+
+
 class Trading(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="gift", description="Give one of your cards to another member")
-    @app_commands.describe(user_card_id="The collection entry ID (from /inventory)", to="Who receives it")
-    async def gift(self, interaction: discord.Interaction, user_card_id: int, to: discord.Member) -> None:
-        if to.id == interaction.user.id:
-            await interaction.response.send_message("You already own that one.", ephemeral=True)
+    @app_commands.command(name="gift", description="Give one or more of your cards to another member")
+    @app_commands.describe(member="Who receives the cards")
+    async def gift(self, interaction: discord.Interaction, member: discord.Member) -> None:
+        if member.id == interaction.user.id:
+            await interaction.response.send_message("You already own those.", ephemeral=True)
+            return
+        if member.bot:
+            await interaction.response.send_message("Bots don't collect cards.", ephemeral=True)
             return
 
-        ok = await database.transfer_card(user_card_id, interaction.user.id, to.id)
-        if not ok:
-            await interaction.response.send_message("That collection entry isn't yours.", ephemeral=True)
+        mine = await database.get_user_cards(interaction.user.id)
+        if not mine:
+            await interaction.response.send_message("You have no cards to give yet.", ephemeral=True)
             return
 
-        await interaction.response.send_message(f"{interaction.user.mention} gifted a card to {to.mention}!")
+        await interaction.response.send_message(
+            content=f"Pick the card(s) to give {member.display_name}, then hit **Give**.",
+            view=GiftView(interaction.user, member, mine),
+            ephemeral=True,
+        )
 
     @app_commands.command(name="trade", description="Offer a two-way card trade to another member")
     @app_commands.describe(member="Who you want to trade with")

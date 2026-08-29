@@ -18,7 +18,8 @@ cards: submit art and it goes straight into the drop pool, then anyone can
    emerald, obsidian, rose). Frames are per-copy: two owners of the same
    card can frame it differently. `/card <id>` — see one card's art and
    how many copies exist.
-4. `/gift <user_card_id> <member>` — hand one of your cards to someone else.
+4. `/gift <member>` — pick one or more of your cards from a menu and hand
+   them to someone else.
 5. `/trade <member>` — build a two-way offer: pick cards from each side,
    send it, and the other member gets Accept / Decline buttons. The swap
    is atomic and re-checks ownership at accept time.

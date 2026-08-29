@@ -27,7 +27,8 @@ SECTIONS: list[tuple[str, str]] = [
     ),
     (
         "Trading",
-        "**/gift** `user_card_id` `member` — hand a card to someone, no strings.\n"
+        "**/gift** `member` — pick one or more of your cards and hand them "
+        "over, no strings.\n"
         "**/trade** `member` — build a two-way offer, pick cards for each "
         "side, and they get Accept / Decline buttons.",
     ),
