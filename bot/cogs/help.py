@@ -30,9 +30,11 @@ SECTIONS: list[tuple[str, str]] = [
     (
         "Trading",
         "**/gift** `member` — same card-by-card browser as /inventory; "
-        "select cards and hand them over, no strings.\n"
-        "**/trade** `member` — build a two-way offer, pick cards for each "
-        "side, and they get Accept / Decline buttons.",
+        "select cards and hand them over, no strings. The gift is shown "
+        "with its art in the channel.\n"
+        "**/trade** `member` — the same browser, two-sided: flip between "
+        "your cards and theirs, Select what each side puts in, then Send "
+        "offer. They get Accept / Decline buttons.",
     ),
 ]
 

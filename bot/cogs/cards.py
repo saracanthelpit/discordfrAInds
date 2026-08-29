@@ -7,18 +7,16 @@ import random
 import time
 from typing import Optional
 
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from bot import config, database, frames
-from bot.cardpicker import CardPickerBoard, fetch_art
+from bot.cardpicker import CardPickerBoard, fetch_art, render_cards
 from bot.database import Card, OwnedCard
 
 MAX_SHOWCASE = 10        # Discord's per-message attachment / embed limit
 DROP_WINDOW = 60         # seconds a drop stays claimable
-_HTTP_TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 # Drop celebration flavor — one of each is picked per drop.
 _DROP_HEADERS = (
@@ -41,41 +39,6 @@ _DROP_ACCENTS = (
     0xF1C40F, 0xE91E63, 0x9B59B6, 0x2ECC71, 0x3498DB, 0xE67E22, 0x1ABC9C, 0xFF5E5B,
 )
 _CLAIM_CHEERS = ("🎊", "🎉", "✨", "💥", "🙌", "🔥")
-
-
-async def render_framed_file(image_url: str, frame_key: str, filename: str) -> discord.File:
-    """Download art from ``image_url`` and return it matted in ``frame_key``."""
-    async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
-        async with session.get(image_url) as resp:
-            resp.raise_for_status()
-            art_bytes = await resp.read()
-    buf = await asyncio.to_thread(frames.compose, art_bytes, frame_key)
-    return discord.File(buf, filename=filename)
-
-
-async def _render_cards(
-    cards: list[OwnedCard], *, footer: Optional[str]
-) -> tuple[list[discord.Embed], list[discord.File]]:
-    """Composite each owned copy in its frame; returns matched embed/file lists."""
-    embeds: list[discord.Embed] = []
-    files: list[discord.File] = []
-    for index, card in enumerate(cards):
-        filename = f"card_{index}.png"
-        try:
-            files.append(await render_framed_file(card.image_url, card.frame, filename))
-        except Exception:
-            continue
-        embed = discord.Embed(
-            title=card.card_name,
-            description=(
-                f"{frames.label_for(card.frame)} · print #{card.print_number}\n"
-                f"Art by <@{card.submitted_by}>"
-            ),
-        )
-        embed.set_image(url=f"attachment://{filename}")
-        embed.set_footer(text=f"Card #{card.card_id}" + (f" · {footer}" if footer else ""))
-        embeds.append(embed)
-    return embeds, files
 
 
 class FrameSelect(discord.ui.Select):
@@ -109,7 +72,7 @@ class FrameSelect(discord.ui.Select):
         label = frames.label_for(frame_key)
         plural = "s" if len(updated) != 1 else ""
         note = f"Applied the **{label}** frame to {len(updated)} card{plural}. Re-run /inventory to refresh it."
-        embeds, files = await _render_cards(updated, footer=None)
+        embeds, files = await render_cards(updated)
         if files:
             await interaction.edit_original_response(content=note, embeds=embeds, attachments=files, view=None)
         else:
@@ -211,7 +174,7 @@ class InventoryBoard(CardPickerBoard):
             await interaction.response.send_message("Select some cards first.", ephemeral=True)
             return
         await interaction.response.defer()
-        embeds, files = await _render_cards(
+        embeds, files = await render_cards(
             picks[:MAX_SHOWCASE], footer=f"shown by {interaction.user.display_name}"
         )
         if not files:

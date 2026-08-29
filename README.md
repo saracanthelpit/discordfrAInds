@@ -22,10 +22,12 @@ cards: submit art and it goes straight into the drop pool, then anyone can
    frame it differently. `/card <id>` — see one card's art and how many
    copies exist.
 4. `/gift <member>` — the same paginated, art-per-card browser as
-   `/inventory`; select cards and hand them to someone else.
-5. `/trade <member>` — build a two-way offer: pick cards from each side,
-   send it, and the other member gets Accept / Decline buttons. The swap
-   is atomic and re-checks ownership at accept time.
+   `/inventory`; select cards and hand them to someone else. The gift is
+   announced with its art (and confetti) in the channel.
+5. `/trade <member>` — the same browser, two-sided: a button flips
+   between your cards and theirs, you Select what each side offers, then
+   Send. The other member gets Accept / Decline buttons; the swap is
+   atomic and re-checks ownership at accept time.
 6. `/help` — an ephemeral rundown of every command.
 
 Every place a card is shown — drops, claims, `/card`, `/inventory`,
@@ -66,11 +68,12 @@ bot/
   database.py       aiosqlite access layer (schema in SCHEMA, later
                     columns in MIGRATIONS, applied on startup)
   frames.py         procedurally-drawn cosmetic frames (Pillow)
-  cardpicker.py     CardPickerBoard: shared paged art-per-card picker (Components V2)
+  cardpicker.py     CardPickerBoard: shared paged art-per-card picker (Components V2);
+                    also render_cards() for the embed-per-card showcases
   cogs/
     submissions.py  /submit
     cards.py        /drop, /inventory, /card, /frames
-    trading.py      /gift (one-way), /trade (two-way offer + accept/decline)
+    trading.py      /gift (one-way), /trade (two-sided picker + accept/decline)
     help.py         /help
 data/
   cards.db          created automatically on first run (gitignored)

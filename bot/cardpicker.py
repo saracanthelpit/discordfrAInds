@@ -1,8 +1,8 @@
 """Shared paginated, per-card art picker built on Components V2.
 
-Both /inventory and /gift show a page of cards, each with its framed art and a
-Select toggle, plus Prev/Next and whatever action buttons the subclass adds.
-Composited pages are cached, so toggling a selection never re-fetches or
+/inventory, /gift and /trade all show a page of cards, each with its framed art
+and a Select toggle, plus Prev/Next and whatever action buttons the subclass
+adds. Composited pages are cached, so toggling a selection never re-fetches or
 re-uploads anything.
 
 Cards passed in must expose: ``id``, ``card_id``, ``card_name``, ``image_url``,
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from io import BytesIO
-from typing import Callable, Sequence
+from typing import Callable, Optional, Sequence
 
 import aiohttp
 import discord
@@ -44,8 +44,42 @@ async def fetch_art(urls: Sequence[str]) -> dict[str, bytes]:
     return fetched
 
 
+async def render_cards(
+    cards: Sequence[OwnedCard], *, footer: Optional[str] = None
+) -> tuple[list[discord.Embed], list[discord.File]]:
+    """One embed + framed-art attachment per card. Cards that fail to load are skipped."""
+    art = await fetch_art([c.image_url for c in cards])
+    embeds: list[discord.Embed] = []
+    files: list[discord.File] = []
+    for index, card in enumerate(cards):
+        raw = art.get(card.image_url)
+        if raw is None:
+            continue
+        try:
+            buf = await asyncio.to_thread(frames.compose, raw, card.frame)
+        except Exception:
+            continue
+        filename = f"show_{index}.png"
+        files.append(discord.File(buf, filename=filename))
+        embed = discord.Embed(
+            title=card.card_name,
+            description=(
+                f"{frames.label_for(card.frame)} · print #{card.print_number}\n"
+                f"Art by <@{card.submitted_by}>"
+            ),
+        )
+        embed.set_image(url=f"attachment://{filename}")
+        embed.set_footer(text=f"Card #{card.card_id}" + (f" · {footer}" if footer else ""))
+        embeds.append(embed)
+    return embeds, files
+
+
 class CardPickerBoard(discord.ui.LayoutView):
-    """Paged card list with per-card art + Select toggle. Subclass to add actions."""
+    """Paged card list with per-card art + Select toggle. Subclass to add actions.
+
+    Subclasses that juggle more than one selection (e.g. a trade's two sides)
+    override ``_active_cards`` and ``_selected_set`` to swap what the page shows.
+    """
 
     def __init__(
         self,
@@ -65,26 +99,34 @@ class CardPickerBoard(discord.ui.LayoutView):
         self.selected: set[int] = set()
         self._cache: dict[tuple[str, str], bytes] = {}  # (url, frame) -> composited PNG
 
+    # --- what the current page draws from (override for multi-selection) ---
+    def _active_cards(self) -> list[OwnedCard]:
+        return self.cards
+
+    def _selected_set(self) -> set[int]:
+        return self.selected
+
     # --- pagination -------------------------------------------------------
     @property
     def pages(self) -> int:
-        return max(1, -(-len(self.cards) // PAGE_SIZE))
+        return max(1, -(-len(self._active_cards()) // PAGE_SIZE))
 
     def _page_cards(self) -> list[OwnedCard]:
         start = self.page * PAGE_SIZE
-        return self.cards[start : start + PAGE_SIZE]
+        return self._active_cards()[start : start + PAGE_SIZE]
 
     def picked(self) -> list[OwnedCard]:
-        return [c for c in self.cards if c.id in self.selected]
+        chosen = self._selected_set()
+        return [c for c in self._active_cards() if c.id in chosen]
 
     # --- subclass hooks -------------------------------------------------
     def extra_buttons(self) -> list[discord.ui.Button]:
         return []
 
     def status_line(self) -> str:
-        line = f"{len(self.cards)} cards · page {self.page + 1}/{self.pages}"
+        line = f"{len(self._active_cards())} cards · page {self.page + 1}/{self.pages}"
         if self.selectable:
-            line += f" · {len(self.selected)} selected"
+            line += f" · {len(self._selected_set())} selected"
         return line
 
     def action_button(
@@ -115,8 +157,10 @@ class CardPickerBoard(discord.ui.LayoutView):
     async def build(self) -> list[discord.File]:
         """Rebuild components for the current page; returns that page's attachments."""
         self.clear_items()
+        self.page = max(0, min(self.page, self.pages - 1))
         cards = self._page_cards()
         await self._warm_cache(cards)
+        chosen = self._selected_set()
 
         files: list[discord.File] = []
         self.add_item(discord.ui.TextDisplay(f"## {self.title}\n{self.status_line()}"))
@@ -137,7 +181,7 @@ class CardPickerBoard(discord.ui.LayoutView):
             )
             if self.selectable:
                 row = discord.ui.ActionRow()
-                row.add_item(self._toggle_button(card))
+                row.add_item(self._toggle_button(card, selected=card.id in chosen))
                 self.add_item(row)
             self.add_item(discord.ui.Separator())
 
@@ -149,15 +193,15 @@ class CardPickerBoard(discord.ui.LayoutView):
         self.add_item(nav)
         return files
 
-    def _toggle_button(self, card: OwnedCard) -> discord.ui.Button:
-        on = card.id in self.selected
+    def _toggle_button(self, card: OwnedCard, *, selected: bool) -> discord.ui.Button:
         button = discord.ui.Button(
-            label="Selected ✓" if on else "Select",
-            style=discord.ButtonStyle.success if on else discord.ButtonStyle.secondary,
+            label="Selected ✓" if selected else "Select",
+            style=discord.ButtonStyle.success if selected else discord.ButtonStyle.secondary,
         )
 
         async def callback(interaction: discord.Interaction) -> None:
-            self.selected.discard(card.id) if card.id in self.selected else self.selected.add(card.id)
+            chosen = self._selected_set()
+            chosen.discard(card.id) if card.id in chosen else chosen.add(card.id)
             await self.build()  # cache is warm; this just restyles buttons
             await interaction.response.edit_message(view=self)
 
