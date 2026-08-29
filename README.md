@@ -10,8 +10,9 @@ cards: submit art and it goes straight into the drop pool, then anyone can
    announced with an embed and immediately joins the drop pool.
 2. `/drop` — posts a celebratory panel (random accent colour, hype
    copy) with `DROP_SIZE` cards, each shown with its art and its own
-   Claim button. First click wins that copy; claims are numbered in the
-   order they're claimed (print #1 gets a shout-out).
+   Claim button, plus a live "ends in…" countdown. First click wins that
+   copy (print #1 gets a shout-out); after 1 minute the buttons lock and
+   unclaimed ones flip to "too slow".
 3. `/inventory [member]` — browse a collection card by card, paginated,
    each card shown with its art. On your own you get a **Select** button
    per card; selected cards (across pages) can be posted with **Show in
@@ -20,8 +21,8 @@ cards: submit art and it goes straight into the drop pool, then anyone can
    obsidian, rose). Frames are per-copy: two owners of the same card can
    frame it differently. `/card <id>` — see one card's art and how many
    copies exist.
-4. `/gift <member>` — pick one or more of your cards from a menu and hand
-   them to someone else.
+4. `/gift <member>` — the same paginated, art-per-card browser as
+   `/inventory`; select cards and hand them to someone else.
 5. `/trade <member>` — build a two-way offer: pick cards from each side,
    send it, and the other member gets Accept / Decline buttons. The swap
    is atomic and re-checks ownership at accept time.
@@ -65,9 +66,10 @@ bot/
   database.py       aiosqlite access layer (schema in SCHEMA, later
                     columns in MIGRATIONS, applied on startup)
   frames.py         procedurally-drawn cosmetic frames (Pillow)
+  cardpicker.py     CardPickerBoard: shared paged art-per-card picker (Components V2)
   cogs/
     submissions.py  /submit
-    cards.py        /drop, /inventory (paged, per-card select), /card, /frames
+    cards.py        /drop, /inventory, /card, /frames
     trading.py      /gift (one-way), /trade (two-way offer + accept/decline)
     help.py         /help
 data/

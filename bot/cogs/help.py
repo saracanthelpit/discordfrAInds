@@ -13,8 +13,9 @@ SECTIONS: list[tuple[str, str]] = [
         "Get cards",
         "**/submit** `name` `image` — turn a piece of AI art into a card; it "
         "joins the drop pool right away.\n"
-        "**/drop** — post a set of cards with claim buttons. First click wins "
-        f"each copy. One drop per member every {config.DROP_COOLDOWN_SECONDS}s.",
+        "**/drop** — post a set of cards, each with its art and a Claim "
+        "button. First click wins; the drop closes after 1 minute. One drop "
+        f"per member every {config.DROP_COOLDOWN_SECONDS}s.",
     ),
     (
         "Your collection & frames",
@@ -28,8 +29,8 @@ SECTIONS: list[tuple[str, str]] = [
     ),
     (
         "Trading",
-        "**/gift** `member` — pick one or more of your cards and hand them "
-        "over, no strings.\n"
+        "**/gift** `member` — same card-by-card browser as /inventory; "
+        "select cards and hand them over, no strings.\n"
         "**/trade** `member` — build a two-way offer, pick cards for each "
         "side, and they get Accept / Decline buttons.",
     ),

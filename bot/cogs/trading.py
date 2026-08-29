@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot import database, frames
+from bot.cardpicker import CardPickerBoard
 from bot.database import OwnedCard
 
 # Discord caps a select at 25 options and a message at 10 attachments; keep
@@ -177,8 +178,8 @@ class OfferResponse(discord.ui.View):
         self._lock()
 
 
-class GiftView(discord.ui.View):
-    """Ephemeral, giver-only: pick card(s) and hand them straight over."""
+class GiftBoard(CardPickerBoard):
+    """Pick cards from your collection (art shown) and hand them to one member."""
 
     def __init__(
         self,
@@ -186,43 +187,47 @@ class GiftView(discord.ui.View):
         recipient: discord.Member,
         cards: list[OwnedCard],
     ) -> None:
-        super().__init__(timeout=180)
+        super().__init__(
+            cards,
+            title=f"Gift to {recipient.display_name}",
+            user_id=giver.id,
+            selectable=True,
+        )
         self.giver = giver
         self.recipient = recipient
-        self._by_id = {str(c.id): c for c in cards}
-        self.select = _CardSelect(cards, f"Cards to give {recipient.display_name}…", required=True)
-        self.add_item(self.select)
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.giver.id:
-            await interaction.response.send_message("This isn't your gift.", ephemeral=True)
-            return False
-        return True
+    def extra_buttons(self) -> list[discord.ui.Button]:
+        return [
+            self.action_button(
+                f"Give to {self.recipient.display_name}", self._give, discord.ButtonStyle.success
+            )
+        ]
 
-    @discord.ui.button(label="Give", style=discord.ButtonStyle.success, row=4)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        picked_ids = list(self.select.values)
-        if not picked_ids:
-            await interaction.response.send_message("Pick at least one card first.", ephemeral=True)
+    async def _give(self, interaction: discord.Interaction) -> None:
+        picks = self.picked()
+        if not picks:
+            await interaction.response.send_message("Select at least one card first.", ephemeral=True)
             return
 
         given: list[OwnedCard] = []
-        for card_id in picked_ids:
-            if await database.transfer_card(int(card_id), self.giver.id, self.recipient.id):
-                given.append(self._by_id[card_id])
-
-        for item in self.children:
-            item.disabled = True
+        for card in picks:
+            if await database.transfer_card(card.id, self.giver.id, self.recipient.id):
+                given.append(card)
         if not given:
-            await interaction.response.edit_message(
-                content="Those aren't yours to give anymore.", view=self
+            await interaction.response.send_message(
+                "Those aren't yours to give anymore.", ephemeral=True
             )
             return
 
+        given_ids = {c.id for c in given}
+        self.cards = [c for c in self.cards if c.id not in given_ids]
+        self.selected.clear()
+        self.page = min(self.page, self.pages - 1)
+        self.title = "✅ Gifted!" if not self.cards else f"Gift to {self.recipient.display_name}"
+        files = await self.build()
+        await interaction.response.edit_message(view=self, attachments=files)
+
         plural = "s" if len(given) != 1 else ""
-        await interaction.response.edit_message(
-            content=f"Gifted {len(given)} card{plural} to {self.recipient.display_name}. ✅", view=self
-        )
         lines = "\n".join(_attribution_line(c) for c in given)
         await interaction.followup.send(
             content=f"{self.giver.mention} gifted {self.recipient.mention} {len(given)} card{plural}:\n{lines}",
@@ -249,11 +254,10 @@ class Trading(commands.Cog):
             await interaction.response.send_message("You have no cards to give yet.", ephemeral=True)
             return
 
-        await interaction.response.send_message(
-            content=f"Pick the card(s) to give {member.display_name}, then hit **Give**.",
-            view=GiftView(interaction.user, member, mine),
-            ephemeral=True,
-        )
+        await interaction.response.defer(ephemeral=True)
+        board = GiftBoard(interaction.user, member, mine)
+        files = await board.build()
+        await interaction.followup.send(view=board, files=files, ephemeral=True)
 
     @app_commands.command(name="trade", description="Offer a two-way card trade to another member")
     @app_commands.describe(member="Who you want to trade with")
