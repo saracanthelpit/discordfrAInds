@@ -6,6 +6,8 @@ from discord.ext import commands
 
 from bot import database
 
+NAME_MAX = 80
+
 
 class Submissions(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
@@ -16,6 +18,11 @@ class Submissions(commands.Cog):
     async def submit(self, interaction: discord.Interaction, name: str, image: discord.Attachment) -> None:
         if not image.content_type or not image.content_type.startswith("image/"):
             await interaction.response.send_message("That attachment isn't an image.", ephemeral=True)
+            return
+
+        name = name.strip()[:NAME_MAX]
+        if not name:
+            await interaction.response.send_message("Give the card a name.", ephemeral=True)
             return
 
         card_id = await database.create_card(name, image.url, interaction.user.id)

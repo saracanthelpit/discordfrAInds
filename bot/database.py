@@ -46,12 +46,32 @@ class OwnedCard:
     card_name: str
     image_url: str
     print_number: int
+    submitted_by: int
+    frame: str = "plain"
+
+
+# Columns added after the initial schema, applied on startup if missing.
+MIGRATIONS = {
+    "user_cards": {
+        "frame": "ALTER TABLE user_cards ADD COLUMN frame TEXT NOT NULL DEFAULT 'plain'",
+    },
+}
+
+
+async def _apply_migrations(db: aiosqlite.Connection) -> None:
+    for table, columns in MIGRATIONS.items():
+        cursor = await db.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in await cursor.fetchall()}
+        for column, ddl in columns.items():
+            if column not in existing:
+                await db.execute(ddl)
 
 
 async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(SCHEMA)
+        await _apply_migrations(db)
         await db.commit()
 
 
@@ -111,7 +131,8 @@ async def get_user_cards(owner_id: int) -> list[OwnedCard]:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """
-            SELECT uc.id, uc.card_id, c.name AS card_name, c.image_url, uc.print_number
+            SELECT uc.id, uc.card_id, c.name AS card_name, c.image_url,
+                   uc.print_number, c.submitted_by, uc.frame
             FROM user_cards uc
             JOIN cards c ON c.id = uc.card_id
             WHERE uc.owner_id = ?
@@ -121,6 +142,34 @@ async def get_user_cards(owner_id: int) -> list[OwnedCard]:
         )
         rows = await cursor.fetchall()
         return [OwnedCard(**dict(row)) for row in rows]
+
+
+async def set_frame(user_card_id: int, owner_id: int, frame: str) -> OwnedCard | None:
+    """Restyle one owned copy. Returns the updated row, or None if it isn't theirs."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT owner_id FROM user_cards WHERE id = ?", (user_card_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None or row["owner_id"] != owner_id:
+            return None
+        await db.execute(
+            "UPDATE user_cards SET frame = ? WHERE id = ?", (frame, user_card_id)
+        )
+        await db.commit()
+        cursor = await db.execute(
+            """
+            SELECT uc.id, uc.card_id, c.name AS card_name, c.image_url,
+                   uc.print_number, c.submitted_by, uc.frame
+            FROM user_cards uc
+            JOIN cards c ON c.id = uc.card_id
+            WHERE uc.id = ?
+            """,
+            (user_card_id,),
+        )
+        updated = await cursor.fetchone()
+        return OwnedCard(**dict(updated)) if updated else None
 
 
 async def get_card_print_count(card_id: int) -> int:
@@ -145,5 +194,44 @@ async def transfer_card(user_card_id: int, from_owner_id: int, to_owner_id: int)
             "UPDATE user_cards SET owner_id = ? WHERE id = ?",
             (to_owner_id, user_card_id),
         )
+        await db.commit()
+        return True
+
+
+async def _all_owned_by(db: aiosqlite.Connection, user_card_ids: list[int], owner_id: int) -> bool:
+    for user_card_id in user_card_ids:
+        cursor = await db.execute(
+            "SELECT owner_id FROM user_cards WHERE id = ?", (user_card_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None or row[0] != owner_id:
+            return False
+    return True
+
+
+async def swap_cards(
+    give_ids: list[int],
+    want_ids: list[int],
+    giver_id: int,
+    taker_id: int,
+) -> bool:
+    """Move ``give_ids`` to the taker and ``want_ids`` to the giver in one commit.
+
+    Returns False without touching anything if either side no longer owns every
+    card it's putting up (e.g. it was gifted or traded away since the offer).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        if not await _all_owned_by(db, give_ids, giver_id):
+            return False
+        if not await _all_owned_by(db, want_ids, taker_id):
+            return False
+        for user_card_id in give_ids:
+            await db.execute(
+                "UPDATE user_cards SET owner_id = ? WHERE id = ?", (taker_id, user_card_id)
+            )
+        for user_card_id in want_ids:
+            await db.execute(
+                "UPDATE user_cards SET owner_id = ? WHERE id = ?", (giver_id, user_card_id)
+            )
         await db.commit()
         return True
