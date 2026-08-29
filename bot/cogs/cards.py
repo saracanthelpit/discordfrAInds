@@ -1,5 +1,9 @@
 """Dropping cards for members to claim, and viewing collections."""
 
+from __future__ import annotations
+
+from typing import Optional
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -75,7 +79,7 @@ class Cards(commands.Cog):
 
     @app_commands.command(name="inventory", description="See a member's card collection")
     @app_commands.describe(member="Whose collection to view (defaults to you)")
-    async def inventory(self, interaction: discord.Interaction, member: discord.Member | None = None) -> None:
+    async def inventory(self, interaction: discord.Interaction, member: Optional[discord.Member] = None) -> None:
         target = member or interaction.user
         owned = await database.get_user_cards(target.id)
         if not owned:
