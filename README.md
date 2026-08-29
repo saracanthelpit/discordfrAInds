@@ -22,6 +22,7 @@ cards: submit art and it goes straight into the drop pool, then anyone can
 6. `/trade <member>` — build a two-way offer: pick cards from each side,
    send it, and the other member gets Accept / Decline buttons. The swap
    is atomic and re-checks ownership at accept time.
+7. `/help` — an ephemeral rundown of every command.
 
 Every place a card is shown — drops, claims, `/card`, `/inventory`,
 frame previews, trade offers — credits the original submitter.
@@ -65,6 +66,7 @@ bot/
     submissions.py  /submit
     cards.py        /drop, /inventory (+ showcase picker), /card, /frame, /frames
     trading.py      /gift (one-way), /trade (two-way offer + accept/decline)
+    help.py         /help
 data/
   cards.db          created automatically on first run (gitignored)
 ```

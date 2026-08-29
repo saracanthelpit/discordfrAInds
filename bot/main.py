@@ -14,6 +14,7 @@ INITIAL_COGS = (
     "bot.cogs.submissions",
     "bot.cogs.cards",
     "bot.cogs.trading",
+    "bot.cogs.help",
 )
 
 
