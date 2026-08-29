@@ -17,18 +17,13 @@ SECTIONS: list[tuple[str, str]] = [
         f"each copy. One drop per member every {config.DROP_COOLDOWN_SECONDS}s.",
     ),
     (
-        "Your collection",
-        "**/inventory** `[member]` — view a collection. Your own comes with a "
-        "picker: choose one or more copies and they post into the channel, "
-        "framed.\n"
+        "Your collection & frames",
+        "**/inventory** `[member]` — view a collection. Your own opens a "
+        "picker: select copies, then **Show in channel** to post them "
+        "(framed) or **Apply a frame** to restyle them. Frames are per copy, "
+        "so your version can look different from everyone else's.\n"
+        "**/frames** — preview the styles.\n"
         "**/card** `id` — one card's art and how many copies exist.",
-    ),
-    (
-        "Frames",
-        "**/frames** — list the styles.\n"
-        "**/frame** `user_card_id` `frame` — mat one of your copies. Frames "
-        "are per copy, so your version can look different from everyone "
-        "else's.",
     ),
     (
         "Trading",

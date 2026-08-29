@@ -12,17 +12,17 @@ cards: submit art and it goes straight into the drop pool, then anyone can
    button on each. First click wins that copy; claims are numbered in the
    order they're claimed (print #1, #2, ...).
 3. `/inventory [member]` — see a collection. Viewing your own gives you a
-   picker: select one or more copies and the bot posts them (framed) into
-   the channel. `/card <id>` — see one card's art and how many copies exist.
-4. `/frames` — list the frame styles. `/frame <user_card_id> <frame>` —
-   mat one of your copies in a fancy frame (bronze, silver, gold, emerald,
-   obsidian, rose). Frames are per-copy: two owners of the same card can
-   frame it differently.
-5. `/gift <user_card_id> <member>` — hand one of your cards to someone else.
-6. `/trade <member>` — build a two-way offer: pick cards from each side,
+   picker: select one or more copies, then **Show in channel** to post
+   them (framed) or **Apply a frame** to restyle them — no card IDs to
+   copy around. `/frames` previews the styles (bronze, silver, gold,
+   emerald, obsidian, rose). Frames are per-copy: two owners of the same
+   card can frame it differently. `/card <id>` — see one card's art and
+   how many copies exist.
+4. `/gift <user_card_id> <member>` — hand one of your cards to someone else.
+5. `/trade <member>` — build a two-way offer: pick cards from each side,
    send it, and the other member gets Accept / Decline buttons. The swap
    is atomic and re-checks ownership at accept time.
-7. `/help` — an ephemeral rundown of every command.
+6. `/help` — an ephemeral rundown of every command.
 
 Every place a card is shown — drops, claims, `/card`, `/inventory`,
 frame previews, trade offers — credits the original submitter.
@@ -64,7 +64,7 @@ bot/
   frames.py         procedurally-drawn cosmetic frames (Pillow)
   cogs/
     submissions.py  /submit
-    cards.py        /drop, /inventory (+ showcase picker), /card, /frame, /frames
+    cards.py        /drop, /inventory (pick → show / frame), /card, /frames
     trading.py      /gift (one-way), /trade (two-way offer + accept/decline)
     help.py         /help
 data/

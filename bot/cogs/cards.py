@@ -70,8 +70,33 @@ class DropView(discord.ui.View):
             item.disabled = True
 
 
-class ShowcaseSelect(discord.ui.Select):
-    """Lets an owner pick copies from their collection to post into the channel, framed."""
+async def _render_cards(
+    cards: list[OwnedCard], *, footer: Optional[str]
+) -> tuple[list[discord.Embed], list[discord.File]]:
+    """Composite each owned copy in its frame; returns matched embed/file lists."""
+    embeds: list[discord.Embed] = []
+    files: list[discord.File] = []
+    for index, card in enumerate(cards):
+        filename = f"card_{index}.png"
+        try:
+            files.append(await render_framed_file(card.image_url, card.frame, filename))
+        except Exception:
+            continue
+        embed = discord.Embed(
+            title=card.card_name,
+            description=(
+                f"{frames.label_for(card.frame)} · print #{card.print_number}\n"
+                f"Art by <@{card.submitted_by}>"
+            ),
+        )
+        embed.set_image(url=f"attachment://{filename}")
+        embed.set_footer(text=f"Card #{card.card_id}" + (f" · {footer}" if footer else ""))
+        embeds.append(embed)
+    return embeds, files
+
+
+class InventorySelect(discord.ui.Select):
+    """Multi-select of the owner's copies. The parent view reads ``picked()``."""
 
     def __init__(self, owned: list[OwnedCard]) -> None:
         self._by_id = {str(c.id): c for c in owned}
@@ -86,48 +111,98 @@ class ShowcaseSelect(discord.ui.Select):
             for c in owned[:25]
         ]
         super().__init__(
-            placeholder="Pick card(s) to show in the channel…",
+            placeholder="Pick card(s)…",
             min_values=1,
             max_values=min(len(options), MAX_SHOWCASE),
             options=options,
         )
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer()
-        picks = [self._by_id[value] for value in self.values]
+        await interaction.response.defer()  # selection is read when a button is pressed
 
-        embeds: list[discord.Embed] = []
-        files: list[discord.File] = []
-        for index, card in enumerate(picks):
-            filename = f"card_{index}.png"
-            try:
-                files.append(await render_framed_file(card.image_url, card.frame, filename))
-            except Exception:
-                continue
-            embed = discord.Embed(
-                title=card.card_name,
-                description=(
-                    f"{frames.label_for(card.frame)} · print #{card.print_number}\n"
-                    f"Art by <@{card.submitted_by}>"
-                ),
+    def picked(self) -> list[OwnedCard]:
+        return [self._by_id[value] for value in self.values]
+
+
+class FrameSelect(discord.ui.Select):
+    """Second step of "Apply a frame": choose one frame for the cards picked so far."""
+
+    def __init__(self, cards: list[OwnedCard], owner_id: int) -> None:
+        self._cards = cards
+        self._owner_id = owner_id
+        options = [
+            discord.SelectOption(
+                label=f.label,
+                value=f.key,
+                description="removes the frame" if f.key == frames.DEFAULT else f"{f.label} frame",
             )
-            embed.set_image(url=f"attachment://{filename}")
-            embed.set_footer(text=f"Card #{card.card_id} · shown by {interaction.user.display_name}")
-            embeds.append(embed)
+            for f in frames.CHOICES
+        ]
+        super().__init__(placeholder="Choose a frame…", min_values=1, max_values=1, options=options)
 
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        frame_key = self.values[0]
+        updated: list[OwnedCard] = []
+        for card in self._cards:
+            row = await database.set_frame(card.id, self._owner_id, frame_key)
+            if row is not None:
+                updated.append(row)
+        if not updated:
+            await interaction.followup.send("Couldn't apply that — those aren't yours.", ephemeral=True)
+            return
+
+        label = frames.label_for(frame_key)
+        plural = "s" if len(updated) != 1 else ""
+        note = f"Applied the **{label}** frame to {len(updated)} card{plural}."
+        embeds, files = await _render_cards(updated, footer=None)
+        if files:
+            await interaction.edit_original_response(content=note, embeds=embeds, attachments=files, view=None)
+        else:
+            await interaction.edit_original_response(content=f"{note} (preview unavailable)", embeds=[], view=None)
+
+
+class InventoryView(discord.ui.View):
+    """Ephemeral, owner-only: pick copies, then show them in-channel or reframe them."""
+
+    def __init__(self, owned: list[OwnedCard], owner_id: int) -> None:
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.select = InventorySelect(owned)
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This isn't your inventory.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Show in channel", style=discord.ButtonStyle.primary, row=1)
+    async def show(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        picks = self.select.picked()
+        if not picks:
+            await interaction.response.send_message("Pick at least one card first.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        embeds, files = await _render_cards(picks, footer=f"shown by {interaction.user.display_name}")
         if not files:
             await interaction.followup.send("Couldn't render those right now — try again in a moment.", ephemeral=True)
             return
-
-        self.disabled = True
-        await interaction.edit_original_response(view=self.view)
+        for child in self.children:
+            child.disabled = True
+        await interaction.edit_original_response(view=self)
         await interaction.followup.send(embeds=embeds, files=files)
 
-
-class ShowcaseView(discord.ui.View):
-    def __init__(self, owned: list[OwnedCard]) -> None:
-        super().__init__(timeout=180)
-        self.add_item(ShowcaseSelect(owned))
+    @discord.ui.button(label="Apply a frame", style=discord.ButtonStyle.secondary, row=1)
+    async def apply_frame(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        picks = self.select.picked()
+        if not picks:
+            await interaction.response.send_message("Pick the card(s) to frame first.", ephemeral=True)
+            return
+        picker = discord.ui.View(timeout=120)
+        picker.add_item(FrameSelect(picks, self.owner_id))
+        names = ", ".join(c.card_name for c in picks)
+        await interaction.response.edit_message(content=f"Choose a frame for **{names}**:", embed=None, view=picker)
 
 
 class Cards(commands.Cog):
@@ -165,7 +240,10 @@ class Cards(commands.Cog):
             return
         raise error
 
-    @app_commands.command(name="inventory", description="See a collection — pick your own cards to show off in the channel")
+    @app_commands.command(
+        name="inventory",
+        description="View a collection — for your own, pick cards to show in-channel or reframe",
+    )
     @app_commands.describe(member="Whose collection to view (defaults to you)")
     async def inventory(self, interaction: discord.Interaction, member: Optional[discord.Member] = None) -> None:
         target = member or interaction.user
@@ -180,58 +258,19 @@ class Cards(commands.Cog):
             embed.set_footer(text="Showing the 25 most recent.")
 
         if target.id == interaction.user.id:
+            embed.set_footer(text="Pick cards below, then Show in channel or Apply a frame.")
             await interaction.response.send_message(
-                embed=embed, view=ShowcaseView(owned), ephemeral=True
+                embed=embed, view=InventoryView(owned, interaction.user.id), ephemeral=True
             )
         else:
             await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="frames", description="List the frames you can put on your cards")
+    @app_commands.command(name="frames", description="Preview the frame styles you can put on your cards")
     async def frames_list(self, interaction: discord.Interaction) -> None:
-        lines = [f"**{f.label}** — `{f.key}`" for f in frames.CHOICES]
-        embed = discord.Embed(title="Available frames", description="\n".join(lines))
-        embed.set_footer(text="Apply one with /frame, then post it with /inventory")
+        lines = [f"**{f.label}**" for f in frames.CHOICES]
+        embed = discord.Embed(title="Frame styles", description="\n".join(lines))
+        embed.set_footer(text="Apply one from /inventory → Apply a frame")
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @app_commands.command(name="frame", description="Put a fancy frame on one of your cards")
-    @app_commands.describe(
-        user_card_id="The collection entry ID (from /inventory)",
-        frame="Which frame to apply",
-    )
-    @app_commands.choices(
-        frame=[app_commands.Choice(name=f.label, value=f.key) for f in frames.CHOICES]
-    )
-    async def frame(
-        self,
-        interaction: discord.Interaction,
-        user_card_id: int,
-        frame: app_commands.Choice[str],
-    ) -> None:
-        await interaction.response.defer(ephemeral=True)
-        owned = await database.set_frame(user_card_id, interaction.user.id, frame.value)
-        if owned is None:
-            await interaction.followup.send("That collection entry isn't yours.", ephemeral=True)
-            return
-
-        try:
-            file = await render_framed_file(owned.image_url, owned.frame, "card.png")
-        except Exception:
-            await interaction.followup.send(
-                f"Applied the **{frame.name}** frame to **{owned.card_name}** — "
-                "couldn't render a preview, but /inventory will show it.",
-                ephemeral=True,
-            )
-            return
-
-        embed = discord.Embed(
-            title=owned.card_name,
-            description=(
-                f"{frame.name} frame · print #{owned.print_number}\n"
-                f"Art by <@{owned.submitted_by}>"
-            ),
-        )
-        embed.set_image(url="attachment://card.png")
-        await interaction.followup.send(embed=embed, file=file, ephemeral=True)
 
     @app_commands.command(name="card", description="Show details for one card")
     async def card(self, interaction: discord.Interaction, card_id: int) -> None:
