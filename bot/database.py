@@ -16,8 +16,7 @@ CREATE TABLE IF NOT EXISTS cards (
     name TEXT NOT NULL,
     image_url TEXT NOT NULL,
     submitted_by INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | rejected
-    approved_by INTEGER,
+    status TEXT NOT NULL DEFAULT 'approved',   -- approved | removed
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -56,7 +55,8 @@ async def init_db() -> None:
         await db.commit()
 
 
-async def create_submission(name: str, image_url: str, submitted_by: int) -> int:
+async def create_card(name: str, image_url: str, submitted_by: int) -> int:
+    """Submits art and puts it straight into the drop pool (no review step)."""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "INSERT INTO cards (name, image_url, submitted_by) VALUES (?, ?, ?)",
@@ -75,15 +75,6 @@ async def get_card(card_id: int) -> Card | None:
         )
         row = await cursor.fetchone()
         return Card(**dict(row)) if row else None
-
-
-async def set_submission_status(card_id: int, status: str, approved_by: int | None) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE cards SET status = ?, approved_by = ? WHERE id = ?",
-            (status, approved_by, card_id),
-        )
-        await db.commit()
 
 
 async def get_random_approved_cards(count: int) -> list[Card]:
@@ -156,13 +147,3 @@ async def transfer_card(user_card_id: int, from_owner_id: int, to_owner_id: int)
         )
         await db.commit()
         return True
-
-
-async def get_pending_submissions() -> list[Card]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute(
-            "SELECT id, name, image_url, submitted_by, status FROM cards WHERE status = 'pending'"
-        )
-        rows = await cursor.fetchall()
-        return [Card(**dict(row)) for row in rows]

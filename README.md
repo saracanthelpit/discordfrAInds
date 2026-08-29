@@ -1,21 +1,19 @@
 # AI Art Cards Bot
 
 A Discord bot that turns members' AI-generated art into collectible trading
-cards: submit art, a mod approves it into the pool, then anyone can `/drop`
-a random set of cards for the server to claim.
+cards: submit art and it goes straight into the drop pool, then anyone can
+`/drop` a random set of cards for the server to claim.
 
 ## How it works
 
-1. `/submit name:<str> image:<attachment>` — post your art for review. It
-   goes to the review channel as a pending submission.
-2. A mod clicks **Approve** or **Reject** on the submission post. Approved
-   cards join the drop pool.
-3. `/drop` — posts a set of cards (size set by `DROP_SIZE`) with a claim
+1. `/submit name:<str> image:<attachment>` — post your art. It's
+   announced with an embed and immediately joins the drop pool.
+2. `/drop` — posts a set of cards (size set by `DROP_SIZE`) with a claim
    button on each. First click wins that copy; claims are numbered in the
    order they're claimed (print #1, #2, ...).
-4. `/inventory [member]` — see a collection. `/card <id>` — see one card's
+3. `/inventory [member]` — see a collection. `/card <id>` — see one card's
    art and how many copies exist.
-5. `/gift <user_card_id> <member>` — hand one of your cards to someone else.
+4. `/gift <user_card_id> <member>` — hand one of your cards to someone else.
 
 ## Setup
 
@@ -32,9 +30,6 @@ Fill in `.env`:
 - `GUILD_ID` — your server's ID (enable Developer Mode in Discord, right-click
   the server icon, Copy Server ID). Set this during development so slash
   commands sync instantly instead of waiting up to an hour for a global sync.
-- `REVIEW_CHANNEL_ID` — the channel where pending submissions get posted.
-- `MOD_ROLE_ID` — the role allowed to approve/reject submissions. If unset,
-  anyone with "Manage Server" can approve.
 
 Invite the bot to your server with the `bot` and `applications.commands`
 scopes, and grant it `Send Messages`, `Embed Links`, and `Read Message
@@ -54,7 +49,7 @@ bot/
   config.py         reads .env
   database.py       aiosqlite access layer (schema lives in SCHEMA)
   cogs/
-    submissions.py  /submit, /pending, mod approve/reject buttons
+    submissions.py  /submit
     cards.py        /drop, /inventory, /card
     trading.py      /gift (one-way transfer)
 data/
@@ -84,3 +79,7 @@ make it yours:
   extra valuable in `/card`.
 - **Pagination** — `/inventory` currently caps at 25 cards; add real
   pagination with buttons for bigger collections.
+- **Moderation** — submissions currently skip review and go straight into
+  the pool. If spam/abuse becomes a problem, add a `/remove <card_id>`
+  admin command (set `status = 'removed'`, already excluded by the
+  `WHERE status = 'approved'` queries) or bring back a review queue.
