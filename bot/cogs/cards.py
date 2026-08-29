@@ -252,6 +252,8 @@ class Cards(commands.Cog):
             )
             return
 
+        await interaction.response.defer()
+
         embed = discord.Embed(title="A drop appeared!", description="Click a button below to claim a card.")
         for card in cards:
             embed.add_field(
@@ -259,10 +261,30 @@ class Cards(commands.Cog):
                 value=f"Card #{card.id} · art by <@{card.submitted_by}>",
                 inline=True,
             )
-        if cards:
+
+        drop_file: Optional[discord.File] = None
+        try:
+            art = await _fetch_art([c.image_url for c in cards])
+            tiles = [
+                (art[c.image_url], frames.DEFAULT, f"#{c.id} {c.name}")
+                for c in cards
+                if c.image_url in art
+            ]
+            if tiles:
+                buf = await asyncio.to_thread(
+                    frames.contact_sheet, tiles, columns=min(len(tiles), 4)
+                )
+                drop_file = discord.File(buf, filename="drop.png")
+                embed.set_image(url="attachment://drop.png")
+        except Exception:
+            drop_file = None
+        if drop_file is None:
             embed.set_thumbnail(url=cards[0].image_url)
 
-        await interaction.response.send_message(embed=embed, view=DropView(cards))
+        kwargs: dict = {"embed": embed, "view": DropView(cards)}
+        if drop_file is not None:
+            kwargs["file"] = drop_file
+        await interaction.followup.send(**kwargs)
 
     @drop.error
     async def drop_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
